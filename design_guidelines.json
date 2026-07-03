@@ -1,0 +1,134 @@
+{
+  "app_name": "TESS AI",
+  "personality": "1 iOS-Native Clean",
+  "personality_one_liner": "A clean, minimalist, pure-white educational AI workspace emphasizing typography, whitespace, and focused interactions with crisp Royal Blue accents.",
+  "color": {
+    "surface": "#FFFFFF",
+    "onSurface": "#1F2937",
+    "surfaceSecondary": "#F0F4F9",
+    "onSurfaceSecondary": "#111827",
+    "surfaceTertiary": "#E5E7EB",
+    "onSurfaceTertiary": "#374151",
+    "surfaceInverse": "#111827",
+    "onSurfaceInverse": "#FFFFFF",
+    "brand": "#2563EB",
+    "brandPrimary": "#2563EB",
+    "onBrandPrimary": "#FFFFFF",
+    "brandSecondary": "#3B82F6",
+    "onBrandSecondary": "#FFFFFF",
+    "brandTertiary": "#DBEAFE",
+    "onBrandTertiary": "#1E3A8A",
+    "success": "#10B981",
+    "onSuccess": "#FFFFFF",
+    "warning": "#F59E0B",
+    "onWarning": "#FFFFFF",
+    "error": "#EF4444",
+    "onError": "#FFFFFF",
+    "info": "#3B82F6",
+    "onInfo": "#FFFFFF",
+    "border": "#E5E7EB",
+    "borderStrong": "#93C5FD",
+    "divider": "#F3F4F6"
+  },
+  "typography": {
+    "displayFontFamily": "Plus Jakarta Sans",
+    "textFontFamily": "Geist",
+    "scale": {
+      "sm": 12,
+      "base": 14,
+      "lg": 16,
+      "xl": 20,
+      "2xl": 24
+    }
+  },
+  "spacing": {
+    "rule": "Generous padding around the chat stream. Input bar has comfortable breathing room. Max-width constraints on web for readability.",
+    "xs": 4,
+    "sm": 8,
+    "md": 12,
+    "lg": 16,
+    "xl": 24,
+    "2xl": 32,
+    "3xl": 48
+  },
+  "radius_tokens": {
+    "sm": 6,
+    "md": 12,
+    "lg": 20,
+    "pill": 999
+  },
+  "shadow_tier": "1",
+  "navigation": "drawer_with_stack",
+  "icon_set": "Phosphor",
+  "glassmorphism": {
+    "enabled": "false",
+    "do's": [
+      "Use solid white or #F0F4F9. The prompt explicitly requested 'Pure White background, Light Grey containers... No futuristic sci-fi grids'. Gemini uses opaque solid surfaces for its flat clean look."
+    ],
+    "dont's": [
+      "Do not use blur or glassmorphism. Keep the pure minimal aesthetic requested."
+    ]
+  },
+  "platform_libraries": {
+    "glass": {
+      "ios": "expo-glass-effect",
+      "android": "expo-blur",
+      "low_end_android_fallback": "solid surfaceSecondary"
+    },
+    "image": "expo-image",
+    "blur": "expo-blur",
+    "bottom_sheet": "@gorhom/bottom-sheet",
+    "animation": "react-native-reanimated",
+    "gesture": "react-native-gesture-handler"
+  },
+  "screens": [
+    {
+      "name": "Auth & Onboarding",
+      "purpose": "Google/Email Auth + Role (Teacher/Student) & Class Picker (6th-12th).",
+      "states": {
+        "loading": "Spinner centered on pure white screen.",
+        "empty": "N/A",
+        "error": "Standard alert text above the action buttons."
+      },
+      "layout": "Minimalist centered card layout on web, full screen on mobile. Pure white canvas. Input fields with #F0F4F9 background. Royal Blue primary button for Auth. Segmented control for Teacher/Student. Bottom sheet or dropdown for class picker."
+    },
+    {
+      "name": "Main Chat App",
+      "purpose": "The core Gemini-style conversational interface with a sidebar and main chat area.",
+      "states": {
+        "loading": "Skeleton text lines for AI thinking state, left-aligned.",
+        "empty": "Centered greeting with suggested educational prompts.",
+        "error": "Inline error message below the failed AI generation block, with a retry button."
+      },
+      "layout": "Desktop/Web: Two columns. Left sidebar (width ~280px) holds 'New Chat' button + Chat History list. Right main area is a pure white canvas centering a chat stream (max-width: 768px). Mobile: Sidebar becomes a slide-in drawer. Message Stream: User messages align right inside #F0F4F9 soft-rounded bubbles. TESS AI messages align left, no bubble, clean text directly on the white background. Below AI response: row with Thumbs Up/Down + TTS speaker icons. Input Area: Fixed to bottom. #F0F4F9 full-width pill container. Contains camera/image icon, mic icon, text input, and a solid Royal Blue circle send button. Changes to white background + subtle blue border on focus. Subtext below input: '✨ TESS AI can hallucinate. Cross-check with your Tesslcrum textbook PDF.'"
+    }
+  ],
+  "images": {
+    "auth_illustration": {
+      "url": "https://images.unsplash.com/photo-1699465301322-362016624dd7",
+      "dark": "https://images.unsplash.com/photo-1699465301322-362016624dd7",
+      "alt": "Abstract minimal art"
+    },
+    "tess_logo": {
+      "url": "https://images.pexels.com/photos/13420509/pexels-photo-13420509.jpeg",
+      "dark": "https://images.pexels.com/photos/13420509/pexels-photo-13420509.jpeg",
+      "alt": "Minimalist geometric TESS logo placeholder"
+    }
+  },
+  "haptics": {
+    "send_message": "light",
+    "thumbs_up": "success",
+    "thumbs_down": "warning",
+    "new_chat": "medium",
+    "role_select": "selection"
+  },
+  "instructions_to_main_agent": [
+    "CRITICAL COLOR OVERRIDE: The user explicitly requested Royal Blue accents. Use #2563EB for the primary brand color and send buttons. Do not substitute with grey/black.",
+    "Web/Responsive structure is paramount. Use `maxWidth: 768` or similar for the central chat stream. Build a responsive left sidebar that stays pinned on desktop and collapses into a Drawer on mobile.",
+    "Match the Gemini text-formatting rules: User bubbles are #F0F4F9 and right-aligned. AI messages have NO bounding box, are left-aligned on the pure white canvas.",
+    "Input bar active state: Default to #F0F4F9. On focus, transition to white (#FFFFFF) with a 1px solid blue border (#93C5FD or brandPrimary).",
+    "Input bar subtext must be placed underneath the input pill, centered or aligned left, in a very small grey font: '✨ TESS AI can hallucinate. Cross-check with your Tesslcrum textbook PDF.'",
+    "Ensure 'TESS AI' uses a highly readable, premium typographic hierarchy. No glassmorphism here, keep surfaces flat and minimal.",
+    "All action icons (thumbs up/down, TTS speaker) below the AI response should be small, outlined (Phosphor icons), and use a light grey/onSurfaceTertiary color."
+  ]
+}
