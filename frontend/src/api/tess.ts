@@ -8,6 +8,7 @@ export type ChatApiRequest = {
   currentClass?: number | null;
   role?: string | null;
   detectedSubject?: string | null;
+  history?: { role: "user" | "ai"; text: string }[];
 };
 
 export type ChatApiResponse = {

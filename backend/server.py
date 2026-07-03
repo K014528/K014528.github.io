@@ -48,6 +48,11 @@ SYSTEM_MESSAGE = (
 )
 
 
+class HistoryTurn(BaseModel):
+    role: str  # "user" | "ai"
+    text: str
+
+
 class ChatRequest(BaseModel):
     prompt: str
     pdfUrl: Optional[str] = None
@@ -56,6 +61,7 @@ class ChatRequest(BaseModel):
     currentClass: Optional[int] = None
     role: Optional[str] = None
     detectedSubject: Optional[str] = None
+    history: Optional[List[HistoryTurn]] = None
 
 
 class ChatResponse(BaseModel):
@@ -187,6 +193,21 @@ async def tess_chat(req: ChatRequest):
     if req.role == "teacher":
         system_msg += "\nThe user is a TEACHER; be more concise and pedagogically detailed."
 
+    # Inject prior conversation history so Gemini has memory of earlier turns.
+    if req.history:
+        # Limit to last 20 turns to keep prompt size reasonable.
+        prior = req.history[-20:]
+        transcript_lines = []
+        for turn in prior:
+            speaker = "Student" if turn.role == "user" else "TESS"
+            transcript_lines.append(f"{speaker}: {turn.text}")
+        transcript = "\n".join(transcript_lines)
+        system_msg += (
+            "\n\n---\nPRIOR CONVERSATION (for your memory; do not repeat, use only as context):\n"
+            + transcript
+            + "\n---\n"
+        )
+
     try:
         chat = LlmChat(
             api_key=GEMINI_API_KEY,
@@ -205,7 +226,7 @@ async def tess_chat(req: ChatRequest):
         )
     except Exception as e:
         logger.exception(f"Gemini call failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Gemini error: {str(e)[:200]}")
+        raise HTTPException(status_code=503, detail="Server is currently busy. Please wait a moment and try again!")
     finally:
         # Cleanup temp files
         for p in temp_paths:

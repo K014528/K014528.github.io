@@ -7,12 +7,12 @@ import {
   TextInput,
   ScrollView,
   ActivityIndicator,
-  KeyboardAvoidingView,
   Platform,
   Image,
   useWindowDimensions,
   Modal,
 } from "react-native";
+import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
@@ -121,6 +121,35 @@ export default function ChatScreen() {
     }
   };
 
+  const onOpenCamera = async () => {
+    try {
+      // Request camera permission contextually (mobile only; web opens picker).
+      if (Platform.OS !== "web") {
+        const perm = await ImagePicker.requestCameraPermissionsAsync();
+        if (!perm.granted) {
+          console.warn("Camera permission denied");
+          return;
+        }
+      }
+      const res = await ImagePicker.launchCameraAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        base64: true,
+        quality: 0.7,
+      });
+      if (!res.canceled && res.assets && res.assets[0]) {
+        const a = res.assets[0];
+        if (a.base64) {
+          const mime = a.mimeType || "image/jpeg";
+          setAttachedImage(`data:${mime};base64,${a.base64}`);
+        } else if (a.uri) {
+          setAttachedImage(a.uri);
+        }
+      }
+    } catch (e) {
+      console.warn("camera err", e);
+    }
+  };
+
   const toggleMic = () => {
     const rec = recognizerRef.current;
     if (!rec.isSupported) return;
@@ -141,12 +170,12 @@ export default function ChatScreen() {
     const text = prompt.trim();
     if (!text && !attachedImage) return;
     setSending(true);
+    let sidLocal: string | null = sessionId;
     try {
-      let sid = sessionId;
-      if (!sid) {
+      if (!sidLocal) {
         const title = text.slice(0, 60) || "New chat";
-        sid = await createChatSession(user.uid, title);
-        setSessionId(sid);
+        sidLocal = await createChatSession(user.uid, title);
+        setSessionId(sidLocal);
       }
 
       // Detect subject and look up textbook PDF for students
@@ -165,13 +194,18 @@ export default function ChatScreen() {
       }
 
       // Store user message
-      await addMessage(user.uid, sid, {
+      await addMessage(user.uid, sidLocal, {
         role: "user",
         text,
         imageBase64: attachedImage,
         detectedSubject: detected,
         pdfUrl,
       });
+
+      // Snapshot the prior conversation to send as memory to Gemini
+      const history = messages
+        .filter((m) => !!m.text)
+        .map((m) => ({ role: m.role, text: m.text }));
 
       // Clear input immediately
       const currentImage = attachedImage;
@@ -183,24 +217,31 @@ export default function ChatScreen() {
         prompt: text,
         pdfUrl,
         imageBase64: currentImage,
-        sessionId: sid,
+        sessionId: sidLocal,
         currentClass: profile.currentClass ?? null,
         role: profile.role,
         detectedSubject: detected,
+        history,
       });
 
-      await addMessage(user.uid, sid, {
+      await addMessage(user.uid, sidLocal, {
         role: "ai",
         text: resp.reply,
         detectedSubject: resp.detectedSubject ?? null,
         pdfUrl: resp.usedPdf ? pdfUrl : null,
       });
-    } catch (e: any) {
-      if (user && sessionId) {
-        await addMessage(user.uid, sessionId, {
-          role: "ai",
-          text: `⚠️ Sorry, I hit an error: ${e?.message || "unknown"}`,
-        });
+    } catch (e) {
+      console.warn("chat send err", e);
+      // Silent error: never expose raw API errors to user
+      try {
+        if (user && sidLocal) {
+          await addMessage(user.uid, sidLocal, {
+            role: "ai",
+            text: "⚠️ Server is currently busy. Please wait a moment and try again!",
+          });
+        }
+      } catch {
+        /* ignore */
       }
     } finally {
       setSending(false);
@@ -310,8 +351,8 @@ export default function ChatScreen() {
 
         <KeyboardAvoidingView
           style={{ flex: 1 }}
-          behavior={Platform.OS === "ios" ? "padding" : undefined}
-          keyboardVerticalOffset={0}
+          behavior={Platform.OS === "ios" ? "padding" : "translate-with-padding"}
+          keyboardVerticalOffset={Platform.OS === "ios" ? 60 : 0}
         >
           <ScrollView
             ref={scrollRef}
@@ -376,6 +417,9 @@ export default function ChatScreen() {
               >
                 <Pressable testID="attach-image-btn" onPress={onPickImage} style={styles.inputIcon}>
                   <Ionicons name="image-outline" size={22} color={colors.onSurfaceTertiary} />
+                </Pressable>
+                <Pressable testID="camera-btn" onPress={onOpenCamera} style={styles.inputIcon}>
+                  <Ionicons name="camera-outline" size={22} color={colors.onSurfaceTertiary} />
                 </Pressable>
                 <Pressable
                   testID="mic-btn"
