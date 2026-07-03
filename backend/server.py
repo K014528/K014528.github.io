@@ -72,10 +72,9 @@ class SubjectDetectRequest(BaseModel):
 # Simple keyword map for subject detection (lightweight, no LLM needed)
 SUBJECT_KEYWORDS = {
     "maths": ["math", "maths", "mathematics", "algebra", "geometry", "trigonometry", "calculus", "arithmetic", "equation"],
-    "science": ["science", "physics", "chemistry", "biology", "bio", "chem", "phy"],
-    "physics": ["physics", "motion", "force", "gravity", "electricity", "magnetism", "optics"],
-    "chemistry": ["chemistry", "chemical", "reaction", "acid", "base", "compound", "molecule", "element", "periodic"],
-    "biology": ["biology", "cell", "organism", "plant", "animal", "human body", "ecosystem", "evolution"],
+    "physics": ["physics", "motion", "force", "gravity", "electricity", "magnetism", "optics", "phy"],
+    "chemistry": ["chemistry", "chemical", "reaction", "acid", "base", "compound", "molecule", "element", "periodic", "chem"],
+    "biology": ["biology", "cell", "organism", "plant", "animal", "human body", "ecosystem", "evolution", "bio"],
     "history": ["history", "historical", "empire", "war", "civilization", "revolution", "ancient", "medieval"],
     "geography": ["geography", "map", "climate", "continent", "country", "river", "mountain", "population"],
     "english": ["english", "grammar", "poem", "poetry", "essay", "literature", "comprehension"],
@@ -84,6 +83,7 @@ SUBJECT_KEYWORDS = {
     "economics": ["economics", "economy", "gdp", "supply", "demand", "market"],
     "computer": ["computer", "coding", "programming", "software", "hardware", "algorithm"],
     "sst": ["social studies", "sst", "social science"],
+    "science": ["science"],
 }
 
 
