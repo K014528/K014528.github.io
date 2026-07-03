@@ -1,30 +1,32 @@
-import { Text, View, StyleSheet, Image } from "react-native";
-
-const EXPO_PUBLIC_BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
+import { useEffect } from "react";
+import { View, ActivityIndicator, StyleSheet } from "react-native";
+import { Redirect } from "expo-router";
+import { useAuth } from "@/src/auth/AuthProvider";
+import { colors } from "@/src/theme";
+import { seedBooksRegistryIfEmpty } from "@/src/firebase/data";
 
 export default function Index() {
-  console.log(EXPO_PUBLIC_BACKEND_URL, "EXPO_PUBLIC_BACKEND_URL");
+  const { user, profile, loading } = useAuth();
 
-  return (
-    <View style={styles.container}>
-      <Image
-        source={require("../assets/images/app-image.png")}
-        style={styles.image}
-      />
-    </View>
-  );
+  useEffect(() => {
+    // Best-effort seed on first load
+    seedBooksRegistryIfEmpty().catch((e) => console.warn("seed err", e));
+  }, []);
+
+  if (loading) {
+    return (
+      <View style={styles.center} testID="auth-loading-screen">
+        <ActivityIndicator color={colors.brand} size="large" />
+      </View>
+    );
+  }
+
+  if (!user) return <Redirect href="/auth" />;
+  if (!profile) return <Redirect href="/onboarding" />;
+  // Teachers go directly to chat as well; profile.role determines behaviour there
+  return <Redirect href="/chat" />;
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#0c0c0c",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  image: {
-    width: "100%",
-    height: "100%",
-    resizeMode: "contain",
-  },
+  center: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: colors.surface },
 });

@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "frontend",
+    "name": "TESS AI",
     "slug": "frontend",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -9,14 +9,26 @@
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSPhotoLibraryUsageDescription": "Attach photos of questions to ask TESS.",
+        "NSCameraUsageDescription": "Snap textbook questions to solve with TESS.",
+        "NSMicrophoneUsageDescription": "Speak your question to TESS."
+      },
+      "bundleIdentifier": "com.emergent.tesssmarttutor.draoh7"
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
-        "backgroundColor": "#000000"
+        "backgroundColor": "#FFFFFF"
       },
-      "edgeToEdgeEnabled": true
+      "edgeToEdgeEnabled": true,
+      "permissions": [
+        "CAMERA",
+        "RECORD_AUDIO",
+        "READ_EXTERNAL_STORAGE"
+      ],
+      "package": "com.emergent.tesssmarttutor.draoh7"
     },
     "web": {
       "bundler": "metro",
@@ -31,7 +43,13 @@
           "image": "./assets/images/splash-image.png",
           "imageWidth": 200,
           "resizeMode": "contain",
-          "backgroundColor": "#000000"
+          "backgroundColor": "#FFFFFF"
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Attach photos of questions to ask TESS."
         }
       ]
     ],
