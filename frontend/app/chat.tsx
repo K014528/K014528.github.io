@@ -23,14 +23,12 @@ import {
   createChatSession,
   subscribeMessages,
   subscribeSessions,
-  findBook,
-  resolveBookUrl,
   setMessageFeedback,
   ChatMessage,
   seedBooksRegistryIfEmpty,
 } from "@/src/firebase/data";
 import { logOut } from "@/src/firebase/config";
-import { detectSubject, tessChat } from "@/src/api/tess";
+import { tessChat } from "@/src/api/tess";
 import { createRecognizer } from "@/src/speech/recognizer";
 import { speak, stop as stopTts } from "@/src/speech/tts";
 import { Markdown } from "@/src/components/Markdown";
@@ -178,28 +176,11 @@ export default function ChatScreen() {
         setSessionId(sidLocal);
       }
 
-      // Detect subject and look up textbook PDF for students
-      let detected: string | null = null;
-      let pdfUrl: string | null = null;
-      if (profile.role === "student" && profile.currentClass) {
-        try {
-          detected = await detectSubject(text);
-        } catch {
-          /* ignore */
-        }
-        if (detected) {
-          const book = await findBook(profile.currentClass, detected);
-          if (book) pdfUrl = await resolveBookUrl(book);
-        }
-      }
-
-      // Store user message
+      // Store user message. Subject/PDF resolution now happens on the backend.
       await addMessage(user.uid, sidLocal, {
         role: "user",
         text,
         imageBase64: attachedImage,
-        detectedSubject: detected,
-        pdfUrl,
       });
 
       // Snapshot the prior conversation to send as memory to Gemini
@@ -212,15 +193,14 @@ export default function ChatScreen() {
       setPrompt("");
       setAttachedImage(null);
 
-      // Call backend
+      // Call backend — backend handles metadata extraction, intent detection,
+      // Firestore lookup, PDF download, and text extraction internally.
       const resp = await tessChat({
         prompt: text,
-        pdfUrl,
         imageBase64: currentImage,
         sessionId: sidLocal,
         currentClass: profile.currentClass ?? null,
         role: profile.role,
-        detectedSubject: detected,
         history,
       });
 
@@ -228,7 +208,7 @@ export default function ChatScreen() {
         role: "ai",
         text: resp.reply,
         detectedSubject: resp.detectedSubject ?? null,
-        pdfUrl: resp.usedPdf ? pdfUrl : null,
+        pdfUrl: resp.usedPdf ? "used" : null,
       });
     } catch (e) {
       console.warn("chat send err", e);

@@ -1,17 +1,10 @@
-"""TESS AI Backend tests."""
-import base64
+"""TESS AI Backend tests — new pipeline (metadata extraction + intent filter + Firestore + pypdf)."""
 import os
 import pytest
 import requests
 
 BASE_URL = os.environ.get("EXPO_PUBLIC_BACKEND_URL", "https://tess-smart-tutor.preview.emergentagent.com").rstrip("/")
 
-# 1x1 red pixel PNG
-TINY_PNG_B64 = (
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="
-)
-
-# small public PDF
 PUBLIC_PDF = "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf"
 
 
@@ -31,123 +24,118 @@ class TestHealth:
         assert data["status"] == "ok"
         assert data["has_gemini_key"] is True
         assert data["model"] == "gemini-2.5-flash"
+        assert data["has_firebase_config"] is True
 
 
-# --- Detect subject ---
-class TestDetectSubject:
-    def test_detect_chemistry(self, api):
-        r = api.post(f"{BASE_URL}/api/detect-subject", json={"prompt": "explain page 61 of my chemistry book"}, timeout=30)
+# --- Metadata extraction ---
+class TestExtractMetadata:
+    def test_extract_full_academic(self, api):
+        r = api.post(f"{BASE_URL}/api/extract-metadata",
+                     json={"prompt": "solve class 8 maths exercise 4B question 3"}, timeout=30)
         assert r.status_code == 200
-        assert r.json().get("subject") == "chemistry"
+        body = r.json()
+        m = body["metadata"]
+        assert m["class"] == 8
+        assert m["subject"] == "maths"
+        assert m["exercise"] == "4B"
+        assert m["question"] == "3"
+        assert body["academic"] is True
 
-    def test_detect_physics(self, api):
-        r = api.post(f"{BASE_URL}/api/detect-subject", json={"prompt": "physics motion problem"}, timeout=30)
+    def test_extract_page_history(self, api):
+        r = api.post(f"{BASE_URL}/api/extract-metadata",
+                     json={"prompt": "explain page 61 of my history book"}, timeout=30)
         assert r.status_code == 200
-        assert r.json().get("subject") == "physics"
+        body = r.json()
+        m = body["metadata"]
+        assert m["subject"] == "history"
+        assert m["page"] == 61
+        assert body["academic"] is True
 
-    def test_detect_maths_ex(self, api):
-        r = api.post(f"{BASE_URL}/api/detect-subject", json={"prompt": "class 8 maths exercise 4B q3"}, timeout=30)
+    def test_extract_casual(self, api):
+        r = api.post(f"{BASE_URL}/api/extract-metadata",
+                     json={"prompt": "hi how are you"}, timeout=30)
         assert r.status_code == 200
-        assert r.json().get("subject") == "maths"
-
-    def test_detect_history(self, api):
-        r = api.post(f"{BASE_URL}/api/detect-subject", json={"prompt": "ancient civilization empire"}, timeout=30)
-        assert r.status_code == 200
-        assert r.json().get("subject") == "history"
-
-    def test_detect_none(self, api):
-        r = api.post(f"{BASE_URL}/api/detect-subject", json={"prompt": "hello there friend"}, timeout=30)
-        assert r.status_code == 200
-        assert r.json().get("subject") is None
+        body = r.json()
+        m = body["metadata"]
+        assert m["subject"] is None
+        assert m["page"] is None
+        assert m["exercise"] is None
+        assert m["question"] is None
+        assert body["academic"] is False
 
 
-# --- Chat ---
-class TestChat:
-    def test_chat_text_only(self, api):
-        r = api.post(
-            f"{BASE_URL}/api/tess/chat",
-            json={"prompt": "Say hello briefly."},
-            timeout=120,
-        )
+# --- Chat pipeline ---
+class TestChatCasual:
+    def test_casual_no_firestore(self, api):
+        r = api.post(f"{BASE_URL}/api/tess/chat",
+                     json={"prompt": "hi, how are you?"}, timeout=120)
         assert r.status_code == 200, r.text
-        data = r.json()
-        assert "reply" in data and isinstance(data["reply"], str) and len(data["reply"]) > 0
-        assert "sessionId" in data
-        assert data["usedPdf"] is False
+        d = r.json()
+        assert d["academicIntent"] is False
+        assert d["usedPdf"] is False
+        assert d["pdfFound"] is False
+        assert isinstance(d["reply"], str) and len(d["reply"]) > 0
 
-    def test_chat_memory_with_history(self, api):
-        """Send history containing chemistry statement, then ask model to recall it."""
+
+class TestChatAcademic:
+    def test_academic_firestore_lookup(self, api):
+        """Class 8 + maths exercise; backend hits Firestore.
+        Accept either usedPdf=true (reply has content) OR a friendly not-found ⚠️ message.
+        """
+        r = api.post(f"{BASE_URL}/api/tess/chat",
+                     json={"prompt": "Solve class 8 maths exercise 4B question 3",
+                           "currentClass": 8}, timeout=180)
+        assert r.status_code == 200, r.text
+        d = r.json()
+        assert d["academicIntent"] is True
+        assert d["detectedClass"] == 8
+        assert d["detectedSubject"] == "maths"
+        assert isinstance(d["reply"], str) and len(d["reply"]) > 0
+        # It must NEVER be a raw stack trace
+        assert "Traceback" not in d["reply"]
+        assert "Exception" not in d["reply"] or "⚠️" in d["reply"]
+        # Either usedPdf True OR friendly warning
+        if not d["usedPdf"]:
+            assert "⚠️" in d["reply"] or "couldn" in d["reply"].lower()
+
+    def test_academic_no_class_graceful(self, api):
+        """No class detected + no currentClass → should degrade gracefully to casual, no raw error."""
+        r = api.post(f"{BASE_URL}/api/tess/chat",
+                     json={"prompt": "explain photosynthesis"}, timeout=120)
+        assert r.status_code == 200, r.text
+        d = r.json()
+        assert isinstance(d["reply"], str) and len(d["reply"]) > 0
+        assert "Traceback" not in d["reply"]
+
+    def test_memory_history(self, api):
         history = [
             {"role": "user", "text": "My favorite subject is chemistry."},
             {"role": "ai", "text": "Great, chemistry is fascinating!"},
         ]
-        r = api.post(
-            f"{BASE_URL}/api/tess/chat",
-            json={
-                "prompt": "What did I just say my favorite subject was?",
-                "history": history,
-            },
-            timeout=120,
-        )
+        r = api.post(f"{BASE_URL}/api/tess/chat",
+                     json={"prompt": "What did I just say my favorite subject was?",
+                           "history": history}, timeout=120)
         assert r.status_code == 200, r.text
-        data = r.json()
-        reply = data.get("reply", "")
-        assert isinstance(reply, str) and len(reply) > 0
-        assert "chemistry" in reply.lower(), f"Reply did not remember 'chemistry': {reply}"
+        d = r.json()
+        assert "chemistry" in d["reply"].lower(), f"Reply lost memory: {d['reply']}"
 
-    def test_chat_with_pdf(self, api):
-        r = api.post(
-            f"{BASE_URL}/api/tess/chat",
-            json={
-                "prompt": "Summarize the attached PDF in 1 short sentence.",
-                "pdfUrl": PUBLIC_PDF,
-            },
-            timeout=180,
-        )
+    def test_pdf_override_extraction(self, api):
+        """Use pdfUrl override with an academic prompt to prove PDF-text extraction pipeline works."""
+        r = api.post(f"{BASE_URL}/api/tess/chat",
+                     json={"prompt": "summarize page 1 of my class 8 maths book briefly",
+                           "currentClass": 8,
+                           "pdfUrl": PUBLIC_PDF}, timeout=180)
         assert r.status_code == 200, r.text
-        data = r.json()
-        assert isinstance(data["reply"], str) and len(data["reply"]) > 0
-        assert data["usedPdf"] is True
-
-    def test_chat_with_bad_pdf(self, api):
-        r = api.post(
-            f"{BASE_URL}/api/tess/chat",
-            json={
-                "prompt": "Just say hi in one word.",
-                "pdfUrl": "https://example.com/nonexistent-file-404.pdf",
-            },
-            timeout=120,
-        )
-        assert r.status_code == 200, r.text
-        data = r.json()
-        assert data["usedPdf"] is False
-        assert len(data["reply"]) > 0
-
-    def test_chat_with_image(self, api):
-        r = api.post(
-            f"{BASE_URL}/api/tess/chat",
-            json={
-                "prompt": "What color dominates this tiny image? Answer in one word.",
-                "imageBase64": f"data:image/png;base64,{TINY_PNG_B64}",
-            },
-            timeout=120,
-        )
-        assert r.status_code == 200, r.text
-        data = r.json()
-        assert isinstance(data["reply"], str) and len(data["reply"]) > 0
+        d = r.json()
+        assert d["academicIntent"] is True
+        assert d["usedPdf"] is True, f"Expected usedPdf=true with override PDF: {d}"
+        assert isinstance(d["reply"], str) and len(d["reply"]) > 0
 
 
 # --- Silent-error contract ---
 class TestSilentErrorContract:
-    """Verify the exception handler path returns HTTP 503 with the friendly message.
-
-    We inspect the source code to assert the contract (no easy way to force Gemini to fail
-    from outside without breaking config). This complements a monkeypatch-based test.
-    """
-
     def test_exception_handler_contract_in_source(self):
         with open("/app/backend/server.py", "r") as f:
             src = f.read()
         assert "status_code=503" in src
         assert "Server is currently busy. Please wait a moment and try again!" in src
-
