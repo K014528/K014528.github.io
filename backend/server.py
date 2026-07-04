@@ -35,6 +35,12 @@ FIREBASE_PROJECT_ID = os.environ.get("FIREBASE_PROJECT_ID", "")
 FIREBASE_WEB_API_KEY = os.environ.get("FIREBASE_WEB_API_KEY", "")
 FIREBASE_STORAGE_BUCKET = os.environ.get("FIREBASE_STORAGE_BUCKET", "")
 
+# Directory where local PDF textbooks live. Filenames should follow the pattern:
+#   NCERT-books-for-class-{class}-{subject}.pdf
+# Case-insensitive; see resolve_local_pdf() for the full matching logic.
+LOCAL_BOOKS_DIR = Path(os.environ.get("LOCAL_BOOKS_DIR", str(ROOT_DIR / "local_books")))
+LOCAL_BOOKS_DIR.mkdir(parents=True, exist_ok=True)
+
 BUSY_MSG = "Server is currently busy. Please wait a moment and try again!"
 
 app = FastAPI(title="TESS AI Backend")
@@ -160,6 +166,67 @@ def is_academic_intent(prompt: str, metadata: dict) -> bool:
     if ACADEMIC_MARKERS.search(prompt):
         return True
     return False
+
+
+# ---------- Local PDF resolver ----------
+# Preferred filename convention:
+#   NCERT-books-for-class-{class}-{subject}.pdf
+# We also try common variants and, as a final fallback, fuzzy substring match on
+# any file in LOCAL_BOOKS_DIR that mentions both the class number and subject word.
+SUBJECT_ALIASES = {
+    "maths": ["maths", "math", "mathematics"],
+    "science": ["science"],
+    "physics": ["physics"],
+    "chemistry": ["chemistry"],
+    "biology": ["biology", "bio"],
+    "history": ["history"],
+    "geography": ["geography", "geo"],
+    "english": ["english"],
+    "hindi": ["hindi"],
+    "civics": ["civics", "polity", "political"],
+    "economics": ["economics", "economy"],
+    "computer": ["computer", "computing", "informatics"],
+    "sst": ["sst", "social"],
+}
+
+
+def resolve_local_pdf(class_num: int, subject: str) -> Optional[Path]:
+    """Return the Path of a locally stored textbook PDF matching {class_num, subject}, or None."""
+    if not class_num or not subject:
+        return None
+    aliases = SUBJECT_ALIASES.get(subject, [subject])
+    # 1) Try exact convention filenames first.
+    candidates: List[Path] = []
+    for alias in aliases:
+        candidates.append(LOCAL_BOOKS_DIR / f"NCERT-books-for-class-{class_num}-{alias}.pdf")
+        candidates.append(LOCAL_BOOKS_DIR / f"ncert-books-for-class-{class_num}-{alias}.pdf")
+        candidates.append(LOCAL_BOOKS_DIR / f"class-{class_num}-{alias}.pdf")
+        candidates.append(LOCAL_BOOKS_DIR / f"class_{class_num}_{alias}.pdf")
+        candidates.append(LOCAL_BOOKS_DIR / f"{alias}-class-{class_num}.pdf")
+    for c in candidates:
+        if c.is_file():
+            return c
+
+    # 2) Case-insensitive fuzzy scan: any .pdf that contains both the class token and any alias.
+    class_tokens = [f"class-{class_num}", f"class_{class_num}", f"class {class_num}", f"cls{class_num}"]
+    try:
+        for f in LOCAL_BOOKS_DIR.iterdir():
+            if not f.is_file() or f.suffix.lower() != ".pdf":
+                continue
+            name = f.name.lower()
+            if any(tok in name for tok in class_tokens) and any(a in name for a in aliases):
+                return f
+    except Exception as e:
+        logger.warning(f"Local book scan error: {e}")
+    return None
+
+
+def read_local_pdf_bytes(path: Path) -> Optional[bytes]:
+    try:
+        return path.read_bytes()
+    except Exception as e:
+        logger.warning(f"read_local_pdf_bytes({path}) failed: {e}")
+        return None
 
 
 # ---------- Firebase (REST) helpers ----------
@@ -334,12 +401,32 @@ async def root():
 
 @api_router.get("/health")
 async def health():
+    local_pdfs = []
+    try:
+        local_pdfs = sorted([f.name for f in LOCAL_BOOKS_DIR.iterdir() if f.is_file() and f.suffix.lower() == ".pdf"])
+    except Exception:
+        local_pdfs = []
     return {
         "status": "ok",
         "has_gemini_key": bool(GEMINI_API_KEY),
         "model": GEMINI_MODEL,
         "has_firebase_config": bool(FIREBASE_PROJECT_ID and FIREBASE_WEB_API_KEY),
+        "local_books_dir": str(LOCAL_BOOKS_DIR),
+        "local_books_count": len(local_pdfs),
+        "local_books_sample": local_pdfs[:10],
     }
+
+
+@api_router.get("/local-books")
+async def list_local_books():
+    files = []
+    try:
+        for f in sorted(LOCAL_BOOKS_DIR.iterdir()):
+            if f.is_file() and f.suffix.lower() == ".pdf":
+                files.append({"name": f.name, "size_bytes": f.stat().st_size})
+    except Exception as e:
+        logger.warning(f"list_local_books err: {e}")
+    return {"dir": str(LOCAL_BOOKS_DIR), "files": files}
 
 
 @api_router.post("/detect-subject")
@@ -401,25 +488,45 @@ async def tess_chat(req: ChatRequest):
     total_pages = 0
     not_found_reason: Optional[str] = None
 
-    # 3) If academic AND we have class+subject → retrieve PDF from Firebase and extract text
+    # 3) If academic AND we have class+subject → retrieve PDF (LOCAL FIRST, Firebase fallback)
     if academic and meta.get("class") and meta.get("subject"):
-        book: Optional[dict] = None
+        pdf_bytes: Optional[bytes] = None
+        source: Optional[str] = None
+
         if req.pdfUrl:
-            # Optional direct override (kept for backward compatibility / tests)
+            # Optional direct override (backward compat / tests).
             pdf_bytes = await download_pdf_bytes(req.pdfUrl)
-        else:
-            book = await firestore_find_book(meta["class"], meta["subject"])
-            pdf_bytes: Optional[bytes] = None
-            if book:
+            if pdf_bytes:
                 pdf_found = True
-                if book.get("pdfUrl"):
-                    pdf_bytes = await download_pdf_bytes(book["pdfUrl"])
-                if not pdf_bytes and book.get("pdfPath"):
-                    pdf_bytes = await download_pdf_bytes(storage_media_url(book["pdfPath"]))
-                if not pdf_bytes:
-                    not_found_reason = "pdf_unreachable"
+                source = "override_url"
             else:
-                not_found_reason = "no_registry_entry"
+                not_found_reason = "pdf_unreachable"
+        else:
+            # (a) Try LOCAL first: /app/backend/local_books/NCERT-books-for-class-{cls}-{subj}.pdf
+            local_path = resolve_local_pdf(meta["class"], meta["subject"])
+            if local_path is not None:
+                pdf_bytes = read_local_pdf_bytes(local_path)
+                if pdf_bytes:
+                    pdf_found = True
+                    source = f"local:{local_path.name}"
+                else:
+                    not_found_reason = "pdf_unreachable"
+
+            # (b) Fallback: Firebase Firestore + Storage (only if local miss).
+            if not pdf_bytes:
+                book = await firestore_find_book(meta["class"], meta["subject"])
+                if book:
+                    pdf_found = True
+                    if book.get("pdfUrl"):
+                        pdf_bytes = await download_pdf_bytes(book["pdfUrl"])
+                    if not pdf_bytes and book.get("pdfPath"):
+                        pdf_bytes = await download_pdf_bytes(storage_media_url(book["pdfPath"]))
+                    if pdf_bytes:
+                        source = "firebase"
+                    else:
+                        not_found_reason = "pdf_unreachable"
+                elif not not_found_reason:
+                    not_found_reason = "no_registry_entry"
 
         if pdf_bytes:
             pdf_context, total_pages = extract_relevant_text(
@@ -427,6 +534,7 @@ async def tess_chat(req: ChatRequest):
             )
             if pdf_context.strip():
                 used_pdf = True
+                logger.info(f"PDF context injected from {source}: {len(pdf_context)} chars, {total_pages} pages")
             else:
                 not_found_reason = not_found_reason or "pdf_extract_empty"
 
@@ -435,13 +543,17 @@ async def tess_chat(req: ChatRequest):
         system_msg = build_academic_system(meta, pdf_context, total_pages)
     elif academic and not used_pdf and meta.get("subject") and meta.get("class"):
         # Academic query but no PDF — return a clear, friendly not-found note.
+        expected_name = f"NCERT-books-for-class-{meta['class']}-{meta['subject']}.pdf"
         reason_txt = {
-            "no_registry_entry": f"I couldn't find a Class {meta['class']} {meta['subject']} textbook in the library yet.",
-            "pdf_unreachable": f"I found the Class {meta['class']} {meta['subject']} book entry but couldn't open the PDF right now.",
-            "pdf_extract_empty": f"I opened the Class {meta['class']} {meta['subject']} PDF but couldn't extract readable text from it.",
+            "no_registry_entry": (
+                f"I couldn't find a Class {meta['class']} {meta['subject']} textbook in the local library. "
+                f"Please drop `{expected_name}` into `backend/local_books/` and try again."
+            ),
+            "pdf_unreachable": f"I found the Class {meta['class']} {meta['subject']} entry but couldn't open the PDF right now.",
+            "pdf_extract_empty": f"I opened the Class {meta['class']} {meta['subject']} PDF but couldn't extract readable text from it (it may be a scanned/image-only PDF).",
         }.get(not_found_reason or "", "I couldn't access your textbook right now.")
         return ChatResponse(
-            reply=f"⚠️ {reason_txt} Please try again later or check with your teacher.",
+            reply=f"⚠️ {reason_txt}",
             sessionId=req.sessionId,
             usedPdf=False,
             detectedSubject=meta.get("subject"),
@@ -525,19 +637,23 @@ async def tess_chat_stream(req: ChatRequest):
     total_pages = 0
     used_pdf = False
     if academic and meta.get("class") and meta.get("subject"):
-        book = await firestore_find_book(meta["class"], meta["subject"])
-        if book:
-            pdf_bytes = None
-            if book.get("pdfUrl"):
-                pdf_bytes = await download_pdf_bytes(book["pdfUrl"])
-            if not pdf_bytes and book.get("pdfPath"):
-                pdf_bytes = await download_pdf_bytes(storage_media_url(book["pdfPath"]))
-            if pdf_bytes:
-                pdf_context, total_pages = extract_relevant_text(
-                    pdf_bytes, meta.get("page"), meta.get("exercise"), meta.get("question")
-                )
-                if pdf_context.strip():
-                    used_pdf = True
+        pdf_bytes: Optional[bytes] = None
+        local_path = resolve_local_pdf(meta["class"], meta["subject"])
+        if local_path is not None:
+            pdf_bytes = read_local_pdf_bytes(local_path)
+        if not pdf_bytes:
+            book = await firestore_find_book(meta["class"], meta["subject"])
+            if book:
+                if book.get("pdfUrl"):
+                    pdf_bytes = await download_pdf_bytes(book["pdfUrl"])
+                if not pdf_bytes and book.get("pdfPath"):
+                    pdf_bytes = await download_pdf_bytes(storage_media_url(book["pdfPath"]))
+        if pdf_bytes:
+            pdf_context, total_pages = extract_relevant_text(
+                pdf_bytes, meta.get("page"), meta.get("exercise"), meta.get("question")
+            )
+            if pdf_context.strip():
+                used_pdf = True
 
     system_msg = (
         build_academic_system(meta, pdf_context, total_pages)
