@@ -1,4 +1,4 @@
-p"""TESS AI Backend tests."""
+"""TESS AI Backend tests."""
 import base64
 import os
 import pytest
@@ -35,20 +35,18 @@ class TestHealth:
 
 # --- Detect subject ---
 class TestDetectSubject:
-    @pytest.mark.parametrize("prompt,expected", [
-        ("Please help me with maths exercise", "maths"),
-        ("Tell me about the history of India", "history"),
-        ("Explain a chemical reaction in chemistry", "maths"),  # 'maths' iterated first; expect first match
-    ])
-    def test_detect(self, api, prompt, expected):
-        r = api.post(f"{BASE_URL}/api/detect-subject", json={"prompt": prompt}, timeout=30)
+    def test_detect_chemistry(self, api):
+        r = api.post(f"{BASE_URL}/api/detect-subject", json={"prompt": "explain page 61 of my chemistry book"}, timeout=30)
         assert r.status_code == 200
-        # We only strictly assert non-null subject
-        subj = r.json().get("subject")
-        assert subj is not None
+        assert r.json().get("subject") == "chemistry"
 
-    def test_detect_maths(self, api):
-        r = api.post(f"{BASE_URL}/api/detect-subject", json={"prompt": "solve this algebra equation"}, timeout=30)
+    def test_detect_physics(self, api):
+        r = api.post(f"{BASE_URL}/api/detect-subject", json={"prompt": "physics motion problem"}, timeout=30)
+        assert r.status_code == 200
+        assert r.json().get("subject") == "physics"
+
+    def test_detect_maths_ex(self, api):
+        r = api.post(f"{BASE_URL}/api/detect-subject", json={"prompt": "class 8 maths exercise 4B q3"}, timeout=30)
         assert r.status_code == 200
         assert r.json().get("subject") == "maths"
 
@@ -68,7 +66,7 @@ class TestChat:
     def test_chat_text_only(self, api):
         r = api.post(
             f"{BASE_URL}/api/tess/chat",
-            json={"prompt": "Say hello in one short sentence."},
+            json={"prompt": "Say hello briefly."},
             timeout=120,
         )
         assert r.status_code == 200, r.text
@@ -76,6 +74,26 @@ class TestChat:
         assert "reply" in data and isinstance(data["reply"], str) and len(data["reply"]) > 0
         assert "sessionId" in data
         assert data["usedPdf"] is False
+
+    def test_chat_memory_with_history(self, api):
+        """Send history containing chemistry statement, then ask model to recall it."""
+        history = [
+            {"role": "user", "text": "My favorite subject is chemistry."},
+            {"role": "ai", "text": "Great, chemistry is fascinating!"},
+        ]
+        r = api.post(
+            f"{BASE_URL}/api/tess/chat",
+            json={
+                "prompt": "What did I just say my favorite subject was?",
+                "history": history,
+            },
+            timeout=120,
+        )
+        assert r.status_code == 200, r.text
+        data = r.json()
+        reply = data.get("reply", "")
+        assert isinstance(reply, str) and len(reply) > 0
+        assert "chemistry" in reply.lower(), f"Reply did not remember 'chemistry': {reply}"
 
     def test_chat_with_pdf(self, api):
         r = api.post(
@@ -89,11 +107,9 @@ class TestChat:
         assert r.status_code == 200, r.text
         data = r.json()
         assert isinstance(data["reply"], str) and len(data["reply"]) > 0
-        # usedPdf should be True (PDF downloaded successfully)
         assert data["usedPdf"] is True
 
     def test_chat_with_bad_pdf(self, api):
-        # Should gracefully skip PDF on 404 and still respond
         r = api.post(
             f"{BASE_URL}/api/tess/chat",
             json={
@@ -119,3 +135,19 @@ class TestChat:
         assert r.status_code == 200, r.text
         data = r.json()
         assert isinstance(data["reply"], str) and len(data["reply"]) > 0
+
+
+# --- Silent-error contract ---
+class TestSilentErrorContract:
+    """Verify the exception handler path returns HTTP 503 with the friendly message.
+
+    We inspect the source code to assert the contract (no easy way to force Gemini to fail
+    from outside without breaking config). This complements a monkeypatch-based test.
+    """
+
+    def test_exception_handler_contract_in_source(self):
+        with open("/app/backend/server.py", "r") as f:
+            src = f.read()
+        assert "status_code=503" in src
+        assert "Server is currently busy. Please wait a moment and try again!" in src
+
